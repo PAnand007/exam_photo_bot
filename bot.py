@@ -1,5 +1,7 @@
 import os
 import json
+import logging
+import asyncio
 from PIL import Image
 
 from telegram import Update, ReplyKeyboardMarkup
@@ -12,17 +14,25 @@ from telegram.ext import (
 )
 
 # =====================
+# LOGGING
+# =====================
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# =====================
 # LOAD ENV & TOKEN
 # =====================
-
-# Only load dotenv if running locally (Render sets env vars)
+# Only load dotenv locally
 if os.environ.get("RENDER") is None:
     try:
         from dotenv import load_dotenv
         load_dotenv()
-        print("✅ Loaded .env for local development")
+        logger.info("✅ Loaded .env for local development")
     except ImportError:
-        print("⚠️ python-dotenv not installed, make sure BOT_TOKEN is set in environment")
+        logger.warning("⚠️ python-dotenv not installed, make sure BOT_TOKEN is set in environment")
 
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
@@ -35,7 +45,7 @@ with open("presets.json", "r") as f:
     PRESETS = json.load(f)
 
 # =====================
-# USER STATE
+# USER STATE MEMORY
 # =====================
 user_state = {}
 
@@ -85,43 +95,58 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     img_type = user_state[user_id]["type"]
     preset = PRESETS[exam][img_type]
 
-    # Download image
-    photo = update.message.photo[-1]
-    file = await photo.get_file()
+    try:
+        # Download image
+        photo = update.message.photo[-1]
+        file = await photo.get_file()
 
-    os.makedirs("temp", exist_ok=True)
-    input_path = f"temp/{user_id}_input.jpg"
-    output_path = f"temp/{user_id}_output.jpg"
+        os.makedirs("temp", exist_ok=True)
+        input_path = f"temp/{user_id}_input.jpg"
+        output_path = f"temp/{user_id}_output.jpg"
 
-    await file.download_to_drive(input_path)
+        await file.download_to_drive(input_path)
 
-    # Process image
-    img = Image.open(input_path).convert("RGB")
-    img = img.resize((preset["width"], preset["height"]))
+        # Process image
+        img = Image.open(input_path).convert("RGB")
+        img = img.resize((preset["width"], preset["height"]))
 
-    quality = 95
-    while True:
-        img.save(output_path, "JPEG", quality=quality)
-        size_kb = os.path.getsize(output_path) / 1024
-        if size_kb <= preset["max_kb"] or quality <= 20:
-            break
-        quality -= 5
+        # Adjust quality to meet max_kb
+        quality = 95
+        while True:
+            img.save(output_path, "JPEG", quality=quality)
+            size_kb = os.path.getsize(output_path) / 1024
+            if size_kb <= preset["max_kb"] or quality <= 20:
+                break
+            quality -= 5
 
-    # Send processed image
-    await update.message.reply_photo(
-        photo=open(output_path, "rb"),
-        caption=(
-            f"✅ {exam} {img_type} ready\n"
-            f"📐 {preset['width']}x{preset['height']} px\n"
-            f"📦 ≤ {preset['max_kb']} KB"
+        # Send processed image
+        await update.message.reply_photo(
+            photo=open(output_path, "rb"),
+            caption=(
+                f"✅ {exam} {img_type} ready\n"
+                f"📐 {preset['width']}x{preset['height']} px\n"
+                f"📦 ≤ {preset['max_kb']} KB"
+            )
         )
-    )
+    except Exception as e:
+        logger.error(f"Error processing image for user {user_id}: {e}")
+        await update.message.reply_text("⚠️ Something went wrong while processing your image.")
+
+    finally:
+        # Clean up temporary files
+        try:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete temp files: {e}")
 
 # =====================
 # ERROR HANDLER
 # =====================
 async def error_handler(update, context):
-    print("⚠️ Error occurred:", context.error)
+    logger.error(f"⚠️ Error occurred: {context.error}")
 
 # =====================
 # MAIN FUNCTION
@@ -137,7 +162,7 @@ def main():
     # Error handler
     app.add_error_handler(error_handler)
 
-    print("🤖 Bot is running...")
+    logger.info("🤖 Bot is running...")
     app.run_polling()
 
 # =====================
