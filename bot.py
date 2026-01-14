@@ -1,15 +1,28 @@
 import os
 import json
+from dotenv import load_dotenv
 from PIL import Image
-from telegram import ReplyKeyboardMarkup, Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
 # =====================
 # LOAD ENV & TOKEN
 # =====================
+
+# Load .env only if it exists (local dev)
+if os.path.exists(".env"):
+    load_dotenv()
+
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    raise ValueError("BOT_TOKEN not found in environment variables")
+    raise ValueError("BOT_TOKEN not found. Set it in .env (local) or Render env variables")
 
 # =====================
 # LOAD PRESETS
@@ -18,16 +31,16 @@ with open("presets.json", "r") as f:
     PRESETS = json.load(f)
 
 # =====================
-# USER STATE MEMORY
+# USER STATE
 # =====================
 user_state = {}
 
 # =====================
-# /start
+# /start COMMAND
 # =====================
-def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[exam] for exam in PRESETS.keys()]
-    update.message.reply_text(
+    await update.message.reply_text(
         "📋 Select Exam:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
@@ -35,14 +48,14 @@ def start(update: Update, context: CallbackContext):
 # =====================
 # HANDLE TEXT (EXAM / TYPE)
 # =====================
-def handle_text(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     text = update.message.text
 
     # Exam selected
     if text in PRESETS:
         user_state[user_id] = {"exam": text}
-        update.message.reply_text(
+        await update.message.reply_text(
             "🖼 Select Image Type:",
             reply_markup=ReplyKeyboardMarkup([["photo", "signature"]], resize_keyboard=True)
         )
@@ -51,16 +64,16 @@ def handle_text(update: Update, context: CallbackContext):
     # Image type selected
     if text in ["photo", "signature"] and user_id in user_state:
         user_state[user_id]["type"] = text
-        update.message.reply_text("📤 Upload your image now")
+        await update.message.reply_text("📤 Upload your image now")
 
 # =====================
 # HANDLE IMAGE
 # =====================
-def handle_image(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
 
     if user_id not in user_state:
-        update.message.reply_text("⚠️ Please start with /start")
+        await update.message.reply_text("⚠️ Please start with /start")
         return
 
     exam = user_state[user_id]["exam"]
@@ -69,11 +82,14 @@ def handle_image(update: Update, context: CallbackContext):
 
     try:
         photo = update.message.photo[-1]
-        file = photo.get_file()
+        file = await photo.get_file()
+
+        # Create temp folder
         os.makedirs("temp", exist_ok=True)
         input_path = f"temp/{user_id}_input.jpg"
         output_path = f"temp/{user_id}_output.jpg"
-        file.download(input_path)
+
+        await file.download_to_drive(input_path)
 
         # Process image
         img = Image.open(input_path).convert("RGB")
@@ -88,7 +104,7 @@ def handle_image(update: Update, context: CallbackContext):
             quality -= 5
 
         # Send result
-        update.message.reply_photo(
+        await update.message.reply_photo(
             photo=open(output_path, "rb"),
             caption=(
                 f"✅ {exam} {img_type} ready\n"
@@ -97,38 +113,42 @@ def handle_image(update: Update, context: CallbackContext):
             )
         )
     except Exception as e:
-        update.message.reply_text("⚠️ Something went wrong while processing your image.")
+        await update.message.reply_text("⚠️ Something went wrong while processing your image.")
         print(f"Error: {e}")
     finally:
-        try:
-            if os.path.exists(input_path):
-                os.remove(input_path)
-            if os.path.exists(output_path):
-                os.remove(output_path)
-        except:
-            pass
+        # Clean up temp files
+        for path in [input_path, output_path]:
+            if os.path.exists(path):
+                os.remove(path)
 
 # =====================
 # ERROR HANDLER
 # =====================
-def error(update: Update, context: CallbackContext):
-    print(f"⚠️ Error: {context.error}")
+async def error_handler(update, context):
+    print("⚠️ Error occurred:", context.error)
 
 # =====================
 # MAIN
 # =====================
 def main():
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
-    dp.add_handler(MessageHandler(Filters.photo, handle_image))
-    dp.add_error_handler(error)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+    app.add_error_handler(error_handler)
 
     print("🤖 Bot is running...")
-    updater.start_polling()
-    updater.idle()
+    app.run_polling()
 
+# =====================
+# RUN
+# =====================
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
