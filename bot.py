@@ -15,11 +15,17 @@ from telegram.ext import (
 # =====================
 # LOAD ENV & TOKEN
 # =====================
-load_dotenv()
+
+# Only use dotenv if BOT_TOKEN not already in environment
+if not os.environ.get("BOT_TOKEN"):
+    from dotenv import load_dotenv
+    load_dotenv()  # loads local .env for development
+
 TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
-    raise ValueError("BOT_TOKEN not found. Check your .env file")
+    raise ValueError("BOT_TOKEN not found. Add it to .env (local) or environment (Render)")
+
 
 # =====================
 # LOAD PRESETS
@@ -137,3 +143,4 @@ def main():
 if __name__ == "__main__":
     main()
 # =====================
+
