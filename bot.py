@@ -1,6 +1,5 @@
 import os
 import json
-from dotenv import load_dotenv
 from PIL import Image
 
 from telegram import Update, ReplyKeyboardMarkup
@@ -16,16 +15,18 @@ from telegram.ext import (
 # LOAD ENV & TOKEN
 # =====================
 
-# Only use dotenv if BOT_TOKEN not already in environment
-if not os.environ.get("BOT_TOKEN"):
-    from dotenv import load_dotenv
-    load_dotenv()  # loads local .env for development
+# Only load dotenv if running locally (Render sets env vars)
+if os.environ.get("RENDER") is None:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        print("✅ Loaded .env for local development")
+    except ImportError:
+        print("⚠️ python-dotenv not installed, make sure BOT_TOKEN is set in environment")
 
 TOKEN = os.getenv("BOT_TOKEN")
-
 if not TOKEN:
-    raise ValueError("BOT_TOKEN not found. Add it to .env (local) or environment (Render)")
-
+    raise ValueError("BOT_TOKEN not found. Add it to .env (local) or environment variable (Render)")
 
 # =====================
 # LOAD PRESETS
@@ -39,7 +40,7 @@ with open("presets.json", "r") as f:
 user_state = {}
 
 # =====================
-# /start
+# /start COMMAND
 # =====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[exam] for exam in PRESETS.keys()]
@@ -49,7 +50,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =====================
-# HANDLE TEXT (EXAM + TYPE)
+# HANDLE TEXT (EXAM / TYPE)
 # =====================
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -60,10 +61,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_state[user_id] = {"exam": text}
         await update.message.reply_text(
             "🖼 Select Image Type:",
-            reply_markup=ReplyKeyboardMarkup(
-                [["photo", "signature"]],
-                resize_keyboard=True
-            )
+            reply_markup=ReplyKeyboardMarkup([["photo", "signature"]], resize_keyboard=True)
         )
         return
 
@@ -74,7 +72,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 # =====================
-# HANDLE IMAGE
+# HANDLE IMAGE UPLOAD
 # =====================
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -109,7 +107,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
         quality -= 5
 
-    # Send result
+    # Send processed image
     await update.message.reply_photo(
         photo=open(output_path, "rb"),
         caption=(
@@ -118,29 +116,32 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📦 ≤ {preset['max_kb']} KB"
         )
     )
+
+# =====================
+# ERROR HANDLER
+# =====================
 async def error_handler(update, context):
     print("⚠️ Error occurred:", context.error)
 
 # =====================
-# MAIN
+# MAIN FUNCTION
 # =====================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_image))
 
-    app.add_error_handler(error_handler)  # 👈 ADD THIS
+    # Error handler
+    app.add_error_handler(error_handler)
 
     print("🤖 Bot is running...")
     app.run_polling()
-
 
 # =====================
 # RUN
 # =====================
 if __name__ == "__main__":
     main()
-# =====================
-
